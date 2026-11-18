@@ -1,0 +1,23 @@
+id: ggs1127
+name: ggs1127
+version: 1.0.0
+author: jx
+icon: ''
+desc: jx
+files:
+  - common\__init__.py
+  - common\ball_order.py
+  - common\color.py
+  - common\config.py
+  - common\geometry.py
+  - common\landmark_order.py
+  - common\position.py
+  - common\roi.py
+  - common\uart_comm.py
+  - tasks\balls.py
+  - tasks\qr_maixcam.py
+  - tasks\rescue.py
+  - tasks\target.py
+  - config.yaml
+  - intrinsics.json
+  - main.py

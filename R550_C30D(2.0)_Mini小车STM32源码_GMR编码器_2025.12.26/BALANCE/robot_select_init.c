@@ -1,4 +1,5 @@
 #include "robot_select_init.h"
+#include "chassis_config.h"
 
 //Initialize the robot parameter structure
 //初始化机器人参数结构体
@@ -16,11 +17,17 @@ void Robot_Select(void)
 	//The ADC value is variable in segments, depending on the number of car models. Currently there are 6 car models, CAR_NUMBER=6
   //ADC值分段变量，取决于小车型号数量，目前有8种小车型号，CAR_NUMBER=8
 	Divisor_Mode=2048/CAR_NUMBER+5;
+#if CHASSIS_STANDALONE
+	/* Select before Robot_Init so geometry and encoder scaling agree. */
+	Car_Mode=CHASSIS_FIXED_CAR_MODE;
+#else
 	Car_Mode=(int) ((Get_adc_Average(Potentiometer,10))/Divisor_Mode); //Collect the pin information of potentiometer //采集电位器引脚信息	
   if(Car_Mode>7)Car_Mode=7;
 
 	//Car_Mode=0;
 	
+#endif
+
 	switch(Car_Mode)
 	{
 		case Mec_Car:       Robot_Init(MEC_wheelspacing,         MEC_axlespacing,          0,                     HALL_30F, Photoelectric_500, Mecanum_75);            break; //麦克纳姆轮小车

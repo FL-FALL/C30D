@@ -9,7 +9,9 @@ Output  : 0: success, others: error code
 **************************************************************************/
 void MPU6050_Get_Accelscope(void)
 {
+#if !CHASSIS_STANDALONE
 	static int onece=0;
+#endif
     imu.accel.x =(I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_XOUT_H)<<8)+I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_XOUT_L); //读取X轴加速度计
     imu.accel.y =(I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_YOUT_H)<<8)+I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_YOUT_L); //读取X轴加速度计
     imu.accel.z =(I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_ZOUT_H)<<8)+I2C_ReadOneByte(devAddr,MPU6050_RA_ACCEL_ZOUT_L); //读取Z轴加速度计
@@ -21,11 +23,13 @@ void MPU6050_Get_Accelscope(void)
     }
     else //10 seconds after starting //开机10秒后
     {
+#if !CHASSIS_STANDALONE
 		if(onece==0)
 		{
 			Flag_Stop=0; //The software fails to flag location 0 //软件失能标志位置0
 			onece=1;
 		}
+#endif
 		Led_Count=300; //The LED returns to normal flicker frequency //LED恢复正常闪烁频率
 		
         //Save the raw data to update zero by clicking the user button

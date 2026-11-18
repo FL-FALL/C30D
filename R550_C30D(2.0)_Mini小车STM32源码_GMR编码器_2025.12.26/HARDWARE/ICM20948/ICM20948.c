@@ -15,7 +15,9 @@ Output  : 0: success, others: error code
 **************************************************************************/
 u8 ICM20948_Get_Gyroscope(void)
 {
+#if !CHASSIS_STANDALONE
 	static int onece=0;
+#endif
     u8 res;
     invMSGyroRead(&imu.gyro.x, &imu.gyro.y, &imu.gyro.z);
     if(SysVal.Time_count<CONTROL_DELAY) // 10 seconds before starting //开机前10秒
@@ -26,11 +28,13 @@ u8 ICM20948_Get_Gyroscope(void)
     }
     else //10 seconds after starting //开机10秒后
     {
+#if !CHASSIS_STANDALONE
 		if(onece==0)
 		{
 			Flag_Stop=0; //The software fails to flag location 0 //软件失能标志位置0
 			onece=1;
-		}	
+		}
+#endif	
 		Led_Count=300; //The LED returns to normal flicker frequency //LED恢复正常闪烁频率
         //Save the raw data to update zero by clicking the user button
         //保存原始数据用于单击用户按键更新零点

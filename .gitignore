@@ -1,0 +1,16 @@
+firmware/OBJ/
+**/build/
+**/Debug/
+**/Release/
+**/__pycache__/
+*.pyc
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.log
+*.uvguix.*
+*.uvoptx
+*.zip

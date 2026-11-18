@@ -1,4 +1,5 @@
 #include "show.h"
+#include "balance.h"
 int Voltage_Show;
 unsigned char i;          
 unsigned char Send_Count; 
@@ -18,6 +19,57 @@ Output  : none
 返回  值：无
 **************************************************************************/
 int Buzzer_count=25;
+#if CHASSIS_STANDALONE
+/* SPD1: target / encoder speed in mm/s. F=positive, R=negative, S=zero.
+ * Use letters as well as numbers so direction is unambiguous on the OLED.
+ */
+static void OLED_ShowWheelSpeed(u8 x,u8 row,float speed_mps)
+{
+    int speed_mmps;
+    if(!(speed_mps>=-9.999f && speed_mps<=9.999f)) {
+        OLED_ShowString(x,row,"ERR");
+        return;
+    }
+    speed_mmps=(int)(speed_mps*1000.0f);
+    if(speed_mmps>0) OLED_ShowString(x,row,"F");
+    else if(speed_mmps<0) OLED_ShowString(x,row,"R");
+    else OLED_ShowString(x,row,"S");
+    OLED_ShowNumber(x+8,row,(u32)(speed_mmps<0 ? -speed_mmps : speed_mmps),4,12);
+}
+
+static void OLED_ShowEncoderDebug(void)
+{
+    float target[4],feedback[4];
+    u8 mode,running,stable,n,row;
+    static const u8 * const names[4]={"A:","B:","C:","D:"};
+    /* Copy one complete control sample; keep OLED I/O outside the lock. */
+    taskENTER_CRITICAL();
+    target[0]=MOTOR_A.Target; target[1]=MOTOR_B.Target;
+    target[2]=MOTOR_C.Target; target[3]=MOTOR_D.Target;
+    feedback[0]=MOTOR_A.Encoder; feedback[1]=MOTOR_B.Encoder;
+    feedback[2]=MOTOR_C.Encoder; feedback[3]=MOTOR_D.Encoder;
+    mode=Car_Mode;
+    stable=Chassis_WheelSpeedsStable() ? 1 : 0;
+    running=(EN && !Flag_Stop) ? 1 : 0;
+    taskEXIT_CRITICAL();
+    memset(OLED_GRAM,0,sizeof(OLED_GRAM));
+    OLED_ShowString(0,0,"SPD1 T/E");
+    if(mode==Mec_Car) OLED_ShowString(72,0,"MEC");
+    else if(mode==Mec_Car_V550) OLED_ShowString(72,0,"MECV");
+    else OLED_ShowString(72,0,"ERR");
+    if(!running) OLED_ShowString(104,0,"OFF");
+    else if(stable) OLED_ShowString(104,0,"OK");
+    else OLED_ShowString(104,0,"ADJ");
+    for(n=0;n<4;++n) {
+        row=12+12*n;
+        OLED_ShowString(0,row,names[n]);
+        OLED_ShowWheelSpeed(16,row,target[n]);
+        OLED_ShowString(52,row,"/");
+        OLED_ShowWheelSpeed(64,row,feedback[n]);
+    }
+    OLED_Refresh_Gram();
+}
+#endif
 void show_task(void *pvParameters)
 {
    u32 lastWakeTime = getSysTickCnt();
@@ -58,10 +110,16 @@ void show_task(void *pvParameters)
 		else if(10<=Voltage && Voltage<10.5f && LowVoltage_1<2)LowVoltage_1++; //10.5V, first buzzer when low battery //10.5V，低电量时蜂鸣器第一次报警
 		else if(Voltage<10 && LowVoltage_2==0)LowVoltage_2=1; //只在等于0时初始化
 					
+#if !CHASSIS_STANDALONE
 		APP_Show();	 //Send data to the APP //向APP发送数据
+#endif
 		
+#if CHASSIS_STANDALONE
+        OLED_ShowEncoderDebug();
+#else
 		if(oled_refresh_flag) OLED_Clear(),oled_refresh_flag=0;
-		else oled_show(); //Tasks are displayed on the screen //显示屏显示任务
+		else oled_show();
+#endif //Tasks are displayed on the screen //显示屏显示任务
    }
 }
 
@@ -84,6 +142,9 @@ void OLED_ShowGamePadState(void)
 void oled_show(void)
 {   
 	int Car_Mode_Show;
+#if CHASSIS_STANDALONE
+    Send_Data.Sensor_Str.X_speed=(short)((MOTOR_A.Encoder+MOTOR_B.Encoder+MOTOR_C.Encoder+MOTOR_D.Encoder)*250.0f);
+#endif
 	
 	//Collect the tap information of the potentiometer, 
 		 //and display the car model to be fitted when the car starts up in real time
@@ -378,7 +439,13 @@ void oled_show(void)
 			 else if (CAN_ON_Flag==1)   OLED_ShowString(0,50,"CAN  ");
 			 else if ((Usart1_ON_Flag || Usart5_ON_Flag)==1) OLED_ShowString(0,50,"USART");
 				else if (nav_walk==1)      OLED_ShowString(0,50,"nav");
-				else                       OLED_ShowString(0,50,"ROS  ");
+				else                       OLED_ShowString(0,50,
+#if CHASSIS_STANDALONE
+                    "LOCAL"
+#else
+                    "ROS  "
+#endif
+                );
 				
 			 //Displays whether controls are allowed in the current car
 			 //显示当前小车是否允许控制
@@ -408,11 +475,15 @@ void oled_show(void)
 			oled_showfloat(Charging_Current/1000.0f,30,30,2,2);
 			//IP显示
 
+#if CHASSIS_STANDALONE
+            OLED_ShowString(0,50,"HOST OFF");
+#else
 			OLED_ShowString(0, 50,"IP:");
 			OLED_ShowNumber(24,50,Received_IP[0],3,12);
 			OLED_ShowNumber(48,50,Received_IP[1],3,12);
 			OLED_ShowNumber(72,50,Received_IP[2],3,12);
 			OLED_ShowNumber(96,50,Received_IP[3],3,12);
+#endif
 			OLED_Refresh_Gram();	
 		}
 	}

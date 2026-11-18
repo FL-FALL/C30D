@@ -1,72 +1,109 @@
 /***********************************************
-¹«Ë¾£ºÂÖÈ¤¿Æ¼¼£¨¶«Ý¸£©ÓÐÏÞ¹«Ë¾
-Æ·ÅÆ£ºWHEELTEC
-¹ÙÍø£ºwheeltec.net
-ÌÔ±¦µêÆÌ£ºshop114407458.taobao.com 
-ËÙÂôÍ¨: https://minibalance.aliexpress.com/store/4455017
-°æ±¾£ºV5.0
-ÐÞ¸ÄÊ±¼ä£º2022-05-05
+ï¿½ï¿½Ë¾ï¿½ï¿½ï¿½ï¿½È¤ï¿½Æ¼ï¿½ï¿½ï¿½ï¿½ï¿½Ý¸ï¿½ï¿½ï¿½ï¿½ï¿½Þ¹ï¿½Ë¾
+Æ·ï¿½Æ£ï¿½WHEELTEC
+ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½wheeltec.net
+ï¿½Ô±ï¿½ï¿½ï¿½ï¿½Ì£ï¿½shop114407458.taobao.com 
+ï¿½ï¿½ï¿½ï¿½Í¨: https://minibalance.aliexpress.com/store/4455017
+ï¿½æ±¾ï¿½ï¿½V5.0
+ï¿½Þ¸ï¿½Ê±ï¿½ä£º2022-05-05
 
 Brand: WHEELTEC
 Website: wheeltec.net
 Taobao shop: shop114407458.taobao.com 
 Aliexpress: https://minibalance.aliexpress.com/store/4455017
 Version: V5.0
-Update£º2022-05-05
+Updateï¿½ï¿½2022-05-05
 
 All rights reserved
 ***********************************************/
 #include "system.h"
-
-//Task priority    //ÈÎÎñÓÅÏÈ¼¶
+#include "arm_servo.h"
+#include "arm_task.h"
+#include "chassis_auto_route.h"
+#include "vision_uart.h"
+#include "vofa_uart.h"
+//Task priority    //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¼ï¿½
 #define START_TASK_PRIO	1
 
-//Task stack size //ÈÎÎñ¶ÑÕ»´óÐ¡	
+//Task stack size //ï¿½ï¿½ï¿½ï¿½ï¿½Õ»ï¿½ï¿½Ð?
 #define START_STK_SIZE 	256  
 
-//Task handle     //ÈÎÎñ¾ä±ú
+//Task handle     //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 TaskHandle_t StartTask_Handler;
+volatile BaseType_t RouteTask_CreateResult;
+volatile BaseType_t ArmOnlyTask_CreateResult;
+volatile BaseType_t VofaTask_CreateResult;
 
-//Task function   //ÈÎÎñº¯Êý
+//Task function   //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 void start_task(void *pvParameters);
 
-//Main function //Ö÷º¯Êý
+//Main function
 int main(void)
-{ 
-  systemInit(); //Hardware initialization //Ó²¼þ³õÊ¼»¯
-	
-	//Create the start task //´´½¨¿ªÊ¼ÈÎÎñ
-	xTaskCreate((TaskFunction_t )start_task,            //Task function   //ÈÎÎñº¯Êý
-							(const char*    )"start_task",          //Task name       //ÈÎÎñÃû³Æ
-							(uint16_t       )START_STK_SIZE,        //Task stack size //ÈÎÎñ¶ÑÕ»´óÐ¡
-							(void*          )NULL,                  //Arguments passed to the task function //´«µÝ¸øÈÎÎñº¯ÊýµÄ²ÎÊý
-							(UBaseType_t    )START_TASK_PRIO,       //Task priority   //ÈÎÎñÓÅÏÈ¼¶
-							(TaskHandle_t*  )&StartTask_Handler);   //Task handle     //ÈÎÎñ¾ä±ú    					
-	vTaskStartScheduler();  //Enables task scheduling //¿ªÆôÈÎÎñµ÷¶È	
+{
+    GPIO_InitTypeDef pc11_gpio;
+    systemInit();
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    GPIO_ResetBits(GPIOC, GPIO_Pin_11); /* Default output LOW. */
+    GPIO_StructInit(&pc11_gpio);
+    pc11_gpio.GPIO_Pin = GPIO_Pin_11;
+    pc11_gpio.GPIO_Mode = GPIO_Mode_OUT;
+    pc11_gpio.GPIO_OType = GPIO_OType_PP;
+    pc11_gpio.GPIO_PuPd = GPIO_PuPd_NOPULL;
+    pc11_gpio.GPIO_Speed = GPIO_Speed_2MHz;
+    GPIO_Init(GPIOC, &pc11_gpio);
+    Chassis_LocalInit(); /* Keep chassis locked for this bench test. */
+    ArmServo_Init();
+
+    /* Optional power-up arm commands go here; corner-5 pose runs at corner 5. */
+    VisionUart_Init(115200U);
+    VOFA_Init();
+    if(xTaskCreate(start_task, "start_task", START_STK_SIZE, NULL,
+                   START_TASK_PRIO, &StartTask_Handler)!=pdPASS) for(;;) { }
+    vTaskStartScheduler();
+    for (;;) { }
 }
- 
-//Start task task function //¿ªÊ¼ÈÎÎñÈÎÎñº¯Êý
+
+//Start task task function //ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 void start_task(void *pvParameters)
 {
-    taskENTER_CRITICAL(); //Enter the critical area //½øÈëÁÙ½çÇø
+    taskENTER_CRITICAL(); //Enter the critical area //ï¿½ï¿½ï¿½ï¿½ï¿½Ù½ï¿½ï¿½ï¿½
 	
-    //Create the task //´´½¨ÈÎÎñ
+    //Create the task //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+#if CHASSIS_STANDALONE && CHASSIS_ARM_ONLY_TEST
+    xTaskCreate(Balance_task, "Balance_task", BALANCE_STK_SIZE, NULL, BALANCE_TASK_PRIO, NULL);
+#else
 	if(Check == 1)
 		xTaskCreate(Check_task,  "Check_task",  CHECK_STK_SIZE,  NULL, CHECK_TASK_PRIO,  NULL);
 	else if(Check == 0)
-		xTaskCreate(Balance_task,  "Balance_task",  BALANCE_STK_SIZE,  NULL, BALANCE_TASK_PRIO,  NULL);	//Vehicle motion control task //Ð¡³µÔË¶¯¿ØÖÆÈÎÎñ
-	if(SysVal.HardWare_Ver==V1_0) 	//IMU data read task //IMUÊý¾Ý¶ÁÈ¡ÈÎÎñ,¸ù¾Ý²»Í¬µÄÓ²¼þ°æ±¾Æô¶¯²»Í¬µÄÈÎÎñ.
+		xTaskCreate(Balance_task,  "Balance_task",  BALANCE_STK_SIZE,  NULL, BALANCE_TASK_PRIO,  NULL);	//Vehicle motion control task //Ð¡ï¿½ï¿½ï¿½Ë¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+#endif
+	if(SysVal.HardWare_Ver==V1_0) 	//IMU data read task //IMUï¿½ï¿½ï¿½Ý¶ï¿½È¡ï¿½ï¿½ï¿½ï¿½,ï¿½ï¿½ï¿½Ý²ï¿½Í¬ï¿½ï¿½Ó²ï¿½ï¿½ï¿½æ±¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.
 		xTaskCreate(MPU6050_task,  "IMU_task",  IMU_STK_SIZE,  NULL, IMU_TASK_PRIO,  NULL);
 	else if( SysVal.HardWare_Ver==V1_1 )
 		xTaskCreate(ICM20948_task,  "IMU_task",  IMU_STK_SIZE,  NULL, IMU_TASK_PRIO,  NULL);
-	xTaskCreate(show_task,     "show_task",     SHOW_STK_SIZE,     NULL, SHOW_TASK_PRIO,     NULL); //The OLED display displays tasks //OLEDÏÔÊ¾ÆÁÏÔÊ¾ÈÎÎñ
-	xTaskCreate(led_task,      "led_task",      LED_STK_SIZE,      NULL, LED_TASK_PRIO,      NULL);	//LED light flashing task //LEDµÆÉÁË¸ÈÎÎñ
-	xTaskCreate(pstwo_task,    "PSTWO_task",    PS2_STK_SIZE,      NULL, PS2_TASK_PRIO,      NULL);	//Read the PS2 controller task //¶ÁÈ¡PS2ÊÖ±úÈÎÎñ
-	xTaskCreate(data_task,     "DATA_task",     DATA_STK_SIZE,     NULL, DATA_TASK_PRIO,     NULL);	//Usartx3, Usartx1 and CAN send data task //´®¿Ú3¡¢´®¿Ú1¡¢CAN·¢ËÍÊý¾ÝÈÎÎñ
-	
-    vTaskDelete(StartTask_Handler); //Delete the start task //É¾³ý¿ªÊ¼ÈÎÎñ
+	xTaskCreate(show_task,     "show_task",     SHOW_STK_SIZE,     NULL, SHOW_TASK_PRIO,     NULL); //The OLED display displays tasks //OLEDï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½
+	xTaskCreate(led_task,      "led_task",      LED_STK_SIZE,      NULL, LED_TASK_PRIO,      NULL);	//LED light flashing task //LEDï¿½ï¿½ï¿½ï¿½Ë¸ï¿½ï¿½ï¿½ï¿½
+#if CHASSIS_STANDALONE
 
-    taskEXIT_CRITICAL();            //Exit the critical section//ÍË³öÁÙ½çÇø
+#if CHASSIS_ARM_ONLY_TEST
+    Chassis_Disarm();
+    ArmOnlyTask_CreateResult=xTaskCreate(ArmMission_TestTask, "Arm_test", 256, NULL, 3, NULL);
+#else
+    if (Check == 0)
+        RouteTask_CreateResult=xTaskCreate(Chassis_RouteTask, "Route_task", 384, NULL, 3, NULL);
+    if(Check==0 && RouteTask_CreateResult!=pdPASS) Chassis_Disarm();
+#endif
+    VofaTask_CreateResult=xTaskCreate(VOFA_Task, "VOFA_task", 512, NULL, 2, NULL);
+#endif
+#if !CHASSIS_STANDALONE
+	xTaskCreate(pstwo_task,    "PSTWO_task",    PS2_STK_SIZE,      NULL, PS2_TASK_PRIO,      NULL);	//Read the PS2 controller task //ï¿½ï¿½È¡PS2ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ï¿½
+#endif
+#if !CHASSIS_STANDALONE
+	xTaskCreate(data_task,     "DATA_task",     DATA_STK_SIZE,     NULL, DATA_TASK_PRIO,     NULL);	//Usartx3, Usartx1 and CAN send data task //ï¿½ï¿½ï¿½ï¿½3ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½CANï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+#endif
+	
+    taskEXIT_CRITICAL();
+    vTaskDelete(NULL);
 }
 
 

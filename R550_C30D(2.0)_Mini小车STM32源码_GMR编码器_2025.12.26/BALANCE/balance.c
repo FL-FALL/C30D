@@ -1,4 +1,13 @@
 #include "balance.h"
+#include <float.h>
+#include <string.h>
+#if CHASSIS_STANDALONE
+static u8 local_reset_pi;
+static void Local_ResetMotorControl(void);
+static void Local_UpdateWheelSpeedStatus(void);
+static unsigned int local_speed_stable_cycles;
+static float local_speed_last_targets[4];
+#endif
 
 //int Time_count=0; //Time variable //计时变量
 
@@ -54,27 +63,39 @@ static uint8_t FlashParam_Save(uint8_t *flag)
 
 void FlashParam_Read(void)
 {
-	int read;
-	read = Read_Flash(0);//读取下标为0的数据
-	if( read!=0xffffffff ) RC_Velocity = *((float*)&read);
-	
-	read = Read_Flash(1);//读取下标为1的数据
-	if( read!=0xffffffff ) Velocity_KP = *((float*)&read);
-	
-	read = Read_Flash(2);//读取下标为2的数据
-	if( read!=0xffffffff ) Velocity_KI = *((float*)&read);
-	
-	read = Read_Flash(3);
-	if( read!=0xffffffff ) LineDiffParam = read;
-	
-	//异常速度数据,过滤
-	if( RC_Velocity < 0 || RC_Velocity > 10000 )
-		RC_Velocity = 500;
-	
-	//纠偏系数异常,过滤
-	if( LineDiffParam  > 100 )
-		LineDiffParam = 50;
-	
+    uint32_t raw;
+    float stored;
+    raw=Read_Flash(0);
+    if(raw!=0xffffffffU) {
+        memcpy(&stored,&raw,sizeof(stored));
+        if(stored>=0.0f && stored<=10000.0f) RC_Velocity=stored;
+        else RC_Velocity=500.0f;
+    }
+    /* Start from explicit source defaults; preserve only valid saved gains.
+     * memcpy decodes the existing Flash format without pointer type-punning.
+     * Zero KI (P-only tuning) is valid, but two zero gains disable the loop.
+     */
+    Velocity_KP=CHASSIS_WHEEL_PI_KP_DEFAULT;
+    Velocity_KI=CHASSIS_WHEEL_PI_KI_DEFAULT;
+#if CHASSIS_WHEEL_PI_USE_FLASH
+    raw=Read_Flash(1);
+    if(raw!=0xffffffffU) {
+        memcpy(&stored,&raw,sizeof(stored));
+        if(stored>=0.0f && stored<=FLT_MAX) Velocity_KP=stored;
+    }
+    raw=Read_Flash(2);
+    if(raw!=0xffffffffU) {
+        memcpy(&stored,&raw,sizeof(stored));
+        if(stored>=0.0f && stored<=FLT_MAX) Velocity_KI=stored;
+    }
+#endif
+    if(Velocity_KP==0.0f && Velocity_KI==0.0f) {
+        Velocity_KP=CHASSIS_WHEEL_PI_KP_DEFAULT;
+        Velocity_KI=CHASSIS_WHEEL_PI_KI_DEFAULT;
+    }
+    raw=Read_Flash(3);
+    if(raw!=0xffffffffU) LineDiffParam=raw;
+    if(LineDiffParam>100U) LineDiffParam=50U;
 }
 
 /**************************************************************************
@@ -306,6 +327,11 @@ void Balance_task(void *pvParameters)
 		//单击用户按键更新陀螺仪零点
 		Key(); 
 			
+#if CHASSIS_STANDALONE
+        /* Route planning runs in Chassis_RouteTask; this 100 Hz task owns
+         * encoder sampling and motor control. */
+        Chassis_LocalUpdate();
+#else
 		if( Allow_Recharge==1 )
 			if( Get_Charging_HardWare==0 ) Allow_Recharge=0,Find_Charging_HardWare();
 		
@@ -338,10 +364,16 @@ void Balance_task(void *pvParameters)
 			else                      Drive_Motor(Move_X, Move_Y, Move_Z);
 		}
 
+#endif
+
 		//If there is no abnormity in the battery voltage, and the enable switch is in the ON position,
 		//and the software failure flag is 0
 		//如果电池电压不存在异常，而且使能开关在ON档位，而且软件失能标志位为0
+#if CHASSIS_STANDALONE
+        if (Chassis_MotionEnabled() && Turn_Off(Voltage)==0)
+#else
 		if(Turn_Off(Voltage)==0||(Allow_Recharge&&EN&&!Flag_Stop)) 
+#endif
 		{ 			
 			//Speed closed-loop control to calculate the PWM value of each motor, 
 			//PWM represents the actual wheel speed					 
@@ -352,6 +384,9 @@ void Balance_task(void *pvParameters)
 			MOTOR_D.Motor_Pwm=Incremental_PI_D(MOTOR_D.Encoder, MOTOR_D.Target);
 
 			Limit_Pwm(16700);
+#if CHASSIS_STANDALONE
+            Local_UpdateWheelSpeedStatus();
+#endif
 
 			//检测是否需要清除PWM并自动执行清理
 			auto_pwm_clear();
@@ -372,7 +407,11 @@ void Balance_task(void *pvParameters)
 		}
 		//If Turn_Off(Voltage) returns to 1, the car is not allowed to move, and the PWM value is set to 0
 		//如果Turn_Off(Voltage)返回值为1，不允许控制小车进行运动，PWM值设置为0
+#if CHASSIS_STANDALONE
+        else Local_ResetMotorControl();
+#else
 		else	Set_Pwm(0,0,0,0,0); 
+#endif
 		
 		//Flash写入
 		if( 1 == FlashParam_Save(&FlashWriteFlag) )
@@ -496,32 +535,13 @@ u32 myabs(long int a)
 	  else temp=a;
 	  return temp;
 }
-/**************************************************************************
-Function: Incremental PI controller
-Input   : Encoder measured value (actual speed), target speed
-Output  : Motor PWM
-According to the incremental discrete PID formula
-pwm+=Kp[e（k）-e(k-1)]+Ki*e(k)+Kd[e(k)-2e(k-1)+e(k-2)]
-e(k) represents the current deviation
-e(k-1) is the last deviation and so on
-PWM stands for incremental output
-In our speed control closed loop system, only PI control is used
-pwm+=Kp[e（k）-e(k-1)]+Ki*e(k)
-
-函数功能：增量式PI控制器
-入口参数：编码器测量值(实际速度)，目标速度
-返回  值：电机PWM
-根据增量式离散PID公式 
-pwm+=Kp[e（k）-e(k-1)]+Ki*e(k)+Kd[e(k)-2e(k-1)+e(k-2)]
-e(k)代表本次偏差 
-e(k-1)代表上一次的偏差  以此类推 
-pwm代表增量输出
-在我们的速度控制闭环系统里面，只使用PI控制
-pwm+=Kp[e（k）-e(k-1)]+Ki*e(k)
-**************************************************************************/
+/* Wheel PI restored from the selected source; retain route stop reset. */
 int Incremental_PI_A (float Encoder,float Target)
 { 	
 	 static float Bias,Pwm,Last_bias;
+#if CHASSIS_STANDALONE
+    if(local_reset_pi) { Bias=0; Pwm=0; Last_bias=0; return 0; }
+#endif
 	 Bias=Target-Encoder; //Calculate the deviation //计算偏差
 	 Pwm+=Velocity_KP*(Bias-Last_bias)+Velocity_KI*Bias; 
 	 if(Pwm>16700)Pwm=16700;
@@ -545,6 +565,9 @@ int Incremental_PI_A (float Encoder,float Target)
 int Incremental_PI_B (float Encoder,float Target)
 {  
 	 static float Bias,Pwm,Last_bias;
+#if CHASSIS_STANDALONE
+    if(local_reset_pi) { Bias=0; Pwm=0; Last_bias=0; return 0; }
+#endif
 	 Bias=Target-Encoder; //Calculate the deviation //计算偏差
 	 Pwm+=Velocity_KP*(Bias-Last_bias)+Velocity_KI*Bias;  
 	 if(Pwm>16700)Pwm=16700;
@@ -563,6 +586,9 @@ int Incremental_PI_B (float Encoder,float Target)
 int Incremental_PI_C (float Encoder,float Target)
 {  
 	 static float Bias,Pwm,Last_bias;
+#if CHASSIS_STANDALONE
+    if(local_reset_pi) { Bias=0; Pwm=0; Last_bias=0; return 0; }
+#endif
 	 Bias=Target-Encoder; //Calculate the deviation //计算偏差
 	 Pwm+=Velocity_KP*(Bias-Last_bias)+Velocity_KI*Bias; 
 	 if(Pwm>16700)Pwm=16700;
@@ -583,6 +609,9 @@ int Incremental_PI_C (float Encoder,float Target)
 int Incremental_PI_D (float Encoder,float Target)
 {  
 	 static float Bias,Pwm,Last_bias;
+#if CHASSIS_STANDALONE
+    if(local_reset_pi) { Bias=0; Pwm=0; Last_bias=0; return 0; }
+#endif
 	
 	 Bias=Target-Encoder; //Calculate the deviation //计算偏差
 	 Pwm+=Velocity_KP*(Bias-Last_bias)+Velocity_KI*Bias;  
@@ -985,13 +1014,22 @@ void Key(void)
     //单击 或 手柄同时按下两边的下扳机，开启自动回充
     if(tmp==single_click )
 	{
+#if CHASSIS_STANDALONE
+        if (Chassis_IsArmed()) Chassis_Disarm();
+        else Chassis_Arm();
+#else
 		Allow_Recharge=!Allow_Recharge;
 		ImuData_copy(&imu.Deviation_gyro,&imu.gyro);
         ImuData_copy(&imu.Deviation_accel,&imu.accel);
+#endif
 	}		
 
     //双击 或 手柄同时按下两边的摇杆,更新陀螺仪
-    else if(tmp==double_click) 
+    else if(tmp==double_click
+#if CHASSIS_STANDALONE
+        && !Chassis_IsArmed()
+#endif
+    ) 
 	{
 		ImuData_copy(&imu.Deviation_gyro,&imu.gyro);
         ImuData_copy(&imu.Deviation_accel,&imu.accel);
@@ -1218,3 +1256,47 @@ void auto_pwm_clear(void)
 	}
 }
 
+
+#if CHASSIS_STANDALONE
+static void Local_UpdateWheelSpeedStatus(void)
+{
+    float targets[4],feedback[4],error;
+    unsigned int n;
+    int matching=1,changed=0;
+    targets[0]=MOTOR_A.Target; targets[1]=MOTOR_B.Target;
+    targets[2]=MOTOR_C.Target; targets[3]=MOTOR_D.Target;
+    feedback[0]=MOTOR_A.Encoder; feedback[1]=MOTOR_B.Encoder;
+    feedback[2]=MOTOR_C.Encoder; feedback[3]=MOTOR_D.Encoder;
+    for(n=0;n<4;++n) {
+        if(targets[n]!=local_speed_last_targets[n]) changed=1;
+        local_speed_last_targets[n]=targets[n];
+        error=targets[n]-feedback[n];
+        if(!(error>=-CHASSIS_WHEEL_SPEED_TOLERANCE_MPS &&
+             error<=CHASSIS_WHEEL_SPEED_TOLERANCE_MPS)) matching=0;
+    }
+    if(changed || !matching) local_speed_stable_cycles=0;
+    if(matching && local_speed_stable_cycles<CHASSIS_WHEEL_SPEED_STABLE_CYCLES)
+        ++local_speed_stable_cycles;
+}
+
+int Chassis_WheelSpeedsStable(void)
+{
+    return local_speed_stable_cycles>=CHASSIS_WHEEL_SPEED_STABLE_CYCLES;
+}
+
+static void Local_ResetMotorControl(void)
+{
+    local_speed_stable_cycles=0;
+    local_reset_pi=1;
+    Incremental_PI_A(0,0); Incremental_PI_B(0,0);
+    Incremental_PI_C(0,0); Incremental_PI_D(0,0);
+    local_reset_pi=0;
+    MOTOR_A.Target=0; MOTOR_B.Target=0; MOTOR_C.Target=0; MOTOR_D.Target=0;
+    MOTOR_A.Motor_Pwm=0; MOTOR_B.Motor_Pwm=0;
+    MOTOR_C.Motor_Pwm=0; MOTOR_D.Motor_Pwm=0;
+    smooth_control.VX=0; smooth_control.VY=0; smooth_control.VZ=0;
+    start_clear=0; start_check_flag=0; wait_clear_times=0;
+    clear_done_once=0; clear_again_times=0; clear_state=0;
+    Set_Pwm(0,0,0,0,0);
+}
+#endif

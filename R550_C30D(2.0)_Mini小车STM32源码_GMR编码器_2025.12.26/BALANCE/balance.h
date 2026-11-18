@@ -18,6 +18,9 @@ extern u8 command_lost_count;
 extern uint32_t LineDiffParam;
 
 void Balance_task(void *pvParameters);
+#if CHASSIS_STANDALONE
+int Chassis_WheelSpeedsStable(void);
+#endif
 void Set_Pwm(int motor_a,int motor_b,int motor_c,int motor_d,int servo);
 void Limit_Pwm(int amplitude);
 float target_limit_float(float insert,float low,float high);

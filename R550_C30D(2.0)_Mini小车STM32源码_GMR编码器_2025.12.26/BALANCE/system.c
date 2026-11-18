@@ -46,7 +46,7 @@ float Move_X, Move_Y, Move_Z;
 
 //PID parameters of Speed control
 //速度控制PID参数
-float Velocity_KP=300,Velocity_KI=300;
+float Velocity_KP=CHASSIS_WHEEL_PI_KP_DEFAULT,Velocity_KI=CHASSIS_WHEEL_PI_KI_DEFAULT;
 
 //Smooth control of intermediate variables, dedicated to omni-directional moving cars
 //平滑控制中间变量，全向移动小车专用
@@ -122,6 +122,14 @@ void systemInit(void)
 	//Delay function initialization
 	//延时函数初始化
     delay_init(168);
+#if CHASSIS_STANDALONE
+    /* Show a boot marker before the IMU probe; otherwise an IMU
+     * failure resets the board before the OLED is initialized. */
+    OLED_Init();
+    OLED_ShowString(0,0,"C30D BOOT");
+    OLED_ShowString(0,16,"CHECKING IMU");
+    OLED_Refresh_Gram();
+#endif
 	//IIC initialization for IMU
     //IIC初始化，用于IMU
     I2C_GPIOInit();
@@ -131,23 +139,31 @@ void systemInit(void)
     //Serial port 1 initialization, communication baud rate 115200,
     //can be used to communicate with ROS terminal
     //串口1初始化，通信波特率115200，可用于与ROS端通信
+#if !CHASSIS_STANDALONE
     uart1_init(115200);
+#endif
 
     //Serial port 2 initialization, communication baud rate 9600,
     //used to communicate with Bluetooth APP terminal
     //串口2初始化，通信波特率9600，用于与蓝牙APP端通信
+#if !CHASSIS_STANDALONE
     uart2_init(9600);
+#endif
 
     //Serial port 3 is initialized and the baud rate is 115200.
     //Serial port 3 is the default port used to communicate with ROS terminal
     //串口3初始化，通信波特率115200，串口3为默认用于与ROS端通信的串口
+#if !CHASSIS_STANDALONE
     uart3_init(115200);
+#endif
 //	uart3_init(230400);
 	
     //Serial port 5 initialization, communication baud rate 115200,
     //can be used to communicate with ROS terminal
     //串口5初始化，通信波特率115200，可用于与ROS端通信
+#if !CHASSIS_STANDALONE
     uart5_init(115200);
+#endif
 	
 	//如果IMU为MPU6050,则是旧版C30D
 	if( MPU6050_DEFAULT_ADDRESS == MPU6050_getDeviceID() )
@@ -155,10 +171,14 @@ void systemInit(void)
 		SysVal.HardWare_Ver = V1_0;
 		//Initialize the hardware interface to the PS2 controller
 		//初始化与PS2手柄连接的硬件接口
+#if !CHASSIS_STANDALONE
 		PS2_Init();
+#endif
 		//PS2 gamepad configuration is initialized and configured in analog mode
 		//PS2手柄配置初始化,配置为模拟量模式	
+#if !CHASSIS_STANDALONE
 		PS2_SetInit();		 
+#endif
 		//Initialize the hardware interface connected to the LED lamp
 		//初始化与LED灯连接的硬件接口
 		V1_0_LED_Init(); 
@@ -173,7 +193,9 @@ void systemInit(void)
 		SysVal.HardWare_Ver = V1_1;
 		
 		//USBHOS初始化
+#if !CHASSIS_STANDALONE
 		MX_USB_HOST_Init();
+#endif
 		
 		//Initialize the hardware interface connected to the LED lamp
 		//初始化与LED灯连接的硬件接口
@@ -183,10 +205,20 @@ void systemInit(void)
 		//ICM20948初始化，用于读取小车三轴角速度、三轴加速度信息
 		invMSInit();
 	}
-	else //无法识别的陀螺仪,复位系统
+	else // IMU identification failed
 	{
+#if CHASSIS_STANDALONE
+        /* Never start the autonomous route without a valid IMU. */
+        OLED_Clear();
+        OLED_ShowString(0,0,"C30D BOOT");
+        OLED_ShowString(0,16,"IMU ERROR");
+        OLED_ShowString(0,32,"MOTORS OFF");
+        OLED_Refresh_Gram();
+        for(;;) { }
+#else
 		NVIC_SystemReset();
-	}         
+#endif
+	}
 
     //Initialize the hardware interface connected to the buzzer
     //初始化与蜂鸣器连接的硬件接口
@@ -198,13 +230,19 @@ void systemInit(void)
 
     //Initialize the hardware interface connected to the OLED display
     //初始化与OLED显示屏连接的硬件接口
+#if !CHASSIS_STANDALONE
     OLED_Init();
+#endif
 
     //Initialize the hardware interface connected to the user's key
     //初始化与用户按键连接的硬件接口
     KEY_Init();
+#if CHASSIS_STANDALONE
+    Check = 0; /* No boot-time motor self-test in standalone mode. */
+#else
 		if(KEY==0)			Check=1;
 		else if(KEY==1)	Check=0;
+#endif
 
     //ADC pin initialization, used to read the battery voltage and potentiometer gear,
     //potentiometer gear determines the car after the boot of the car model
@@ -217,7 +255,9 @@ void systemInit(void)
 	//CAN通信接口初始化
 	//波特率计算方式：42M/[(参数1+参数2+参数3)*参数4]
 	//示例：42M/[(1+7+6)*3] = 1M （只跟前4个参数有关）
+#if !CHASSIS_STANDALONE
     CAN1_Mode_Init(1,7,6,3,0);
+#endif
 
     //According to the tap position of the potentiometer, determine which type of car needs to be matched,
     //and then initialize the corresponding parameters
@@ -244,7 +284,9 @@ void systemInit(void)
     // TIM8_SERVO_Init(9999,168-1);//APB2的时钟频率为168M , 频率=168M/((9999+1)*(167+1))=100Hz
     //Initialize the model remote control interface
     //初始化航模遥控接口
+#if !CHASSIS_STANDALONE
     TIM8_Cap_Init(9999,168-1);  //高级定时器TIM8的时钟频率为168M
+#endif
 
     //Initialize motor speed control and, for controlling motor speed, PWM frequency 10kHz
     //初始化电机速度控制以及，用于控制电机速度，PWM频率10KHZ
@@ -259,7 +301,9 @@ void systemInit(void)
 
     //访问是否存在自动回充装备
     delay_ms(100);
+#if !CHASSIS_STANDALONE
     Find_Charging_HardWare();
+#endif
 	
 	//读取Flash数据
 	FlashParam_Read();

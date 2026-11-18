@@ -1,3 +1,5 @@
+#include "chassis_config.h"
+#if !CHASSIS_STANDALONE
 #include "usartx.h"
 SEND_DATA Send_Data;
 RECEIVE_DATA Receive_Data;
@@ -1485,3 +1487,14 @@ void _System_Reset_(u8 uart_recv)
 
 
 
+
+#else
+#include "usartx.h"
+/* Display/self-test compatibility only. No serial RX, TX or ROS protocol. */
+SEND_DATA Send_Data;
+u8 Received_IP[4] = {0,0,0,0};
+u8 Debug_Flag=0;
+u8 IP_Frame_Valid=0;
+uint8_t FlashWriteFlag=0;
+void USART3_Return(void) { }
+#endif

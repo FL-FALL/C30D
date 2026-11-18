@@ -1,3 +1,5 @@
+#include "chassis_config.h"
+#include "vofa_uart.h"
 #include "usart.h"	
 ////////////////////////////////////////////////////////////////////////////////// 	 
 //如果使用ucos,则包括下面的头文件即可.
@@ -24,7 +26,10 @@ void _sys_exit(int x)
 } 
 //重定义fputc函数 
 int fputc(int ch, FILE *f)
-{ 	
+{
+#if CHASSIS_STANDALONE
+    (void)f; return VOFA_PutChar(ch);
+#else 	
 	while((USART2->SR&0X40)==0);//循环发送,直到发送完毕   
 	USART2->DR = (u8) ch;      
 	return ch;
@@ -37,13 +42,17 @@ int fputc(int ch, FILE *f)
 //	USART3->DR = (u8) ch;      
 //	return ch;
 	
+#endif
 }
 
 //任意串口printf
 #include "stdarg.h"
 uint8_t Ux_TxBuff[256];     //串口x发送缓冲区
 void any_printf(USART_TypeDef* USARTx,char *format,...)
-{	
+{
+#if CHASSIS_STANDALONE
+    (void)USARTx; (void)format;
+#else	
 	uint8_t i;                                           //用于for循环
 	
 	va_list listdata;                                     //建立一个va_list变量listdata
@@ -57,6 +66,7 @@ void any_printf(USART_TypeDef* USARTx,char *format,...)
 			
 	}
 	while((USARTx->SR&0x40)==0);	     //等到最后一个字节数据发送完毕，再退出函数
+#endif
 }
 
 #endif

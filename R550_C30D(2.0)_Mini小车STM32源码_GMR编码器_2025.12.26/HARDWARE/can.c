@@ -1,3 +1,5 @@
+#include "chassis_config.h"
+#if !CHASSIS_STANDALONE
 #include "can.h"
 #include "system.h"
 /**************************************************************************
@@ -463,3 +465,11 @@ u8 CAN1_Send_EXTid_Num(u32 id,u8* msg)
 }
 
 
+
+#else
+#include "can.h"
+/* Legacy callers cannot transmit in standalone mode. Nonzero means failed. */
+u8 CAN1_Send_Num(u32 id,u8* msg) { (void)id; (void)msg; return 1; }
+u8 CAN1_Send_EXTid_Num(u32 id,u8* msg) { (void)id; (void)msg; return 1; }
+u8 CAN1_Send_MsgTEST(u8* msg,u8 len) { (void)msg; (void)len; return 1; }
+#endif

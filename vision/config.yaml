@@ -1,0 +1,106 @@
+# ============================================================================
+# 视觉任务配置文件（main.py 加载，按任务段分发给 tasks/*）。
+# 长度单位 mm，角度单位 度，像素单位 px。
+# ============================================================================
+
+# ---- 相机采集参数 ----------------------------------------------------------
+camera:
+  width: 320             # Fast ball XY acquisition.
+  height: 240            # Packet includes actual dimensions.
+  fps: 60                # 采集帧率，与相机实际能力匹配即可。
+  qr_width: 640          # 扫码任务分辨率；二维码模块需 ≥4px 才能稳定解码，
+  qr_height: 480         # 需要更远解码距离时可保持此值，不需重新标定内参。
+  # 注：内参按 intrinsics.json 的 image_size 在运行时等比缩放，换分辨率不必重标；
+  #     qr_* 与常规分辨率不同，切换到 qr 时会重建相机（约 0.3s）。
+
+# ---- 检测通用参数（balls/target 共用）--------------------------------------
+detect:
+  detect_width: 320      # 检测降采样宽度上限：target 的 ROI 放大到 320 后不再缩放；
+                         # 0=不降采样。
+  kernel_size: 5         # 形态学开/闭椭圆核边长 px；填掉高光空洞，过大会啃掉小球。
+
+# ---- 点位与居中停车（balls/target/rescue 共用）----------------------------
+locate:
+  center_tol: 0.10       # 居中容差：|u-W/2| ≤ tol·W 且 |v-H/2| ≤ tol·H 视为到达。
+                         # 首次检测到的新颜色/新形状按由近到远记 1/2/3 号点位；
+                         # 目标颜色/形状进入该范围后锁存停车并返回点位。
+
+# ---- 任务切换与串口（单字节协议，完整定义见 PROTOCOL.md）-------------------
+comm:
+  uart_port: "/dev/ttyS4"   # MaixCAM2 UART4: A21 TX, A22 RX.
+  baudrate: 115200          # 8N1、无流控；与主控约定一致。
+  # 上下行共用一条串口，每条消息固定 1 字节，无帧头/无校验/无换行。
+  # 下行（主控→相机）：ASCII '1'/'2'/'3'/'4' → qr/balls/target/rescue，其余字节忽略。
+  # 上行（相机→主控）：高 4 位=事件，低 4 位=参数：
+  #   0x0T  IDLE   心跳，T=任务号（1=qr 2=balls 3=target 4=rescue）
+  #   0x1N  POINT  新身份首次出现，已记为点位 N（1/2/3）
+  #   0x2N  STOP   目标已居中，请求底盘停车，目标点位 N（1/2/3）
+  #   0x30  QR_OK  二维码三位任务码解析完成
+  # POINT 与 STOP 在触发当帧立即发一次；锁存停车后每 data_every 帧重发 STOP，
+  # 其余空闲时每 data_every 帧发 IDLE 心跳。切换任务后点位与锁存清零。
+  data_every: 3             # 心跳/重发周期：每 3 帧一次。
+
+# ---- 标定参数 --------------------------------------------------------------
+calib:
+  intrinsics_path: "intrinsics.json"   # 内含 fx/fy/cx/cy 与畸变系数，测距与角度换算依赖它。
+
+# ---- 任务2：三色球 3D 定位 -------------------------------------------------
+balls:
+  count_axis: x          # Balls travel right -> left in image.
+  count_direction: -1
+  count_gate_center: 0.5
+  count_gate_half_width: 0.2  # Count centers between 30% and 70% image width.
+  count_confirm_frames: 3
+  xy_detect_width: 160    # Single-color XY processing width; 320 for more detail, slower.
+  xy_min_area_px: 6       # Minimum contour area in reduced image.
+  xy_min_aspect: 0.4      # Reject narrow streaks; 0 disables.
+  preview_hz: 50          # Disable preview to prioritize fresh XY.
+  color: 1               # 兜底目标球颜色：1=红 2=绿 3=蓝；二维码第 1 位优先（读不到码时用此值）。
+  diameter_mm: 40         # 球的真实直径 D，尺寸法 Z = fx·D/(2r)。
+  hsv:                    # HSV 阈值，键为颜色编号，每项为 [lo,hi] 区间列表。
+    1:                    # 红色跨 H 的 0/180 边界，拆成两段取并集。
+      - [[0, 160, 100], [10, 255, 255]]
+      - [[160, 70, 100], [180, 255, 255]]
+      # 实测结论：V_min=100 可挡住暗部（暗部 V≤99、红球 V≥130）；
+      # S 是比值型挡不住暗部，故 S_min 保持 70。
+    2:                    # 绿色
+      - [[40, 60, 50], [85, 255, 255]]
+    3:                    # 蓝色
+      - [[95, 80, 50], [130, 255, 255]]
+  min_area_ratio: 0.000217  # 轮廓面积下限（占整帧比例），换分辨率自适应。
+  min_circularity: 0.1    # 圆度下限 4πA/P²；贴边候选跳过该判据。
+  min_confidence: 0.1     # 置信度 = 圆度×填充率×色相集中度；纯色球约 0.65~0.9，异物约 0.35~0.5。
+
+# ---- 任务3：靶子定位 -------------------------------------------------------
+target:
+  color: 3                # 兜底靶子颜色：1=红 2=绿 3=蓝；二维码第 2 位优先（读不到码时用此值）。
+  zoom_width: 320         # 把中央 ROI 放大到该宽度再检测（数字放大，采集仍是 320）。
+                          # ROI 大小由 main.py 顶部 ROI_SIZE 控制（默认 40% → 128px），
+                          # 放大 2.5 倍后靶面占更多像素，拟合圆心/半径的量化抖动变小；0=不放大。
+  center_tol: 0.15        # 居中容差，相对放大后的 ROI：0.25 ≈ 画面居中 ±10% 才发停车。
+                          # 0.5 = 整个 ROI 都算到达，目标一进 ROI 就停。
+  outer_diameter_mm: 100  # 外红盘真实直径，尺寸法 Z = fx·100/d_px。
+  min_area_ratio: 0.000217  # 靶面比球大得多，此值几乎不构成限制。
+  min_circularity: 0.7    # 斜视时靶面成椭圆，比球放宽。
+  min_confidence: 0.0     # 默认不筛：斜视靶面≈0.60 与异物≈0.53 间隔很窄。
+  hsv:                    # 格式同 balls。
+    1:                    # 红色：跨 0/180 边界，拆成两段。
+      - [[0, 160, 100], [10, 255, 255]]
+      - [[160, 70, 100], [180, 255, 255]]
+    2:                    # 绿色
+      - [[40, 60, 50], [85, 255, 255]]
+    3:                    # 蓝色
+      - [[95, 80, 50], [130, 255, 255]]
+
+# ---- 任务4：救援（识别白色人质形状）----------------------------------------
+rescue:
+  # 用 YOLO 模型识别三种人质（圆柱 cylinder=1 / 圆锥 cone=2 / 腰鼓 barrel=3）。
+  # best.pt 需先在 PC 转 ONNX，再经 MaixHub 转成 MaixCam2 的 .mud+.axmodel，
+  # 三个文件放板子同一目录，步骤见 tasks/rescue.py 文件头注释。
+  model_path: maixhub-model-convert-maixcam2-11330/model_11330.mud  # 板子上的 .mud 路径（axmodel 须在同一目录）。
+  model_arch: yolov8                 # yolo11 / yolov8 / yolov5，须与训练权重版本一致。
+  dual_buff: false                   # NPU 双缓冲加速：提帧率但略增延迟，需 vnpu 模型文件。
+  conf_th: 0.5                       # 检测置信度阈值；漏检多可降到 0.35。
+  iou_th: 0.45                       # NMS IoU 阈值。
+  roi: [0.0, 0.0, 1.0, 1.0]          # 归一化检测区域 [x0,y0,x1,y1]；相机固定后可收紧排除干扰。
+  max_candidates: 3                  # 最多输出几件人质（按置信度取最高的）。
